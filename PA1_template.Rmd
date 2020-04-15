@@ -5,21 +5,190 @@ output:
     keep_md: true
 ---
 
-
 ## Loading and preprocessing the data
 
+Let us begin with loading the necessary libraries and our data set. We will also do a bit of preliminary
+cleaning on the data set by converting the date variable into a valid date format.
+```{r library, echo = TRUE, message=FALSE, warning=FALSE}
+require("tidyverse")
+```
 
+
+```{r readdata, echo = TRUE}
+AMD = read.csv("activity.csv")
+AMD$date = as.Date(as.character(AMD$date))
+```
 
 ## What is mean total number of steps taken per day?
 
+The first part of the assignment asks us to create a histogram of the number of steps taken each day. The 
+activity data frame contains columns for steps, date, and interval. To answer this question, we have to
+group the data by date, then sum the number of steps across all the different days.
 
+```{r histogram, echo = TRUE, fig.height = 4, warning=FALSE}
+tsteps = AMD %>% group_by(date) %>% summarize(Total_Steps = sum(steps))
+g = ggplot(tsteps, aes(Total_Steps))
+g + geom_histogram(color = "red", binwidth = 2000, fill = "orange") +
+  xlab("Total Steps") +
+  ylab("Frequency") +
+  ggtitle("Histogram of Total Steps taken each day")
+```
+
+After the data has been grouped properly, we can use the Total_Steps variable created in the tsteps summary
+to calculate the mean and median number of steps taken each day.
+
+```{r summary, echo = TRUE}
+mean_median_steps = tsteps %>% summarize(Mean_Steps = mean(Total_Steps, na.rm =T),
+                                         Median_Steps = median(Total_Steps, na.rm=T))
+m = trunc(mean_median_steps$Mean_Steps)
+med = mean_median_steps$Median_Steps
+```
+
+The mean number of steps taken each day is 10766 and the median number of steps is `r med`.
 
 ## What is the average daily activity pattern?
 
+Next we are asked to create a time series plot capturing the average number of steps taken by interval. Each
+day is split into 5 minute intervals, so we know that if we group by interval, taking the mean will give us
+what we are looking for. 
 
+```{r timeseries, echo = TRUE}
+mean_by_interval = AMD %>% group_by(interval) %>% summarize(Mean = mean(steps, na.rm = T))
+g2 = ggplot(mean_by_interval, aes(interval, Mean))
+g2 + geom_line(linetype = "dashed", color = "red") +
+     xlab("Interval") +
+     ylab("Mean Steps Taken") +
+     ggtitle("Time Series of Average Steps taken by Interval")
+```
+
+Does our plot make sense? It looks like it, since between midnight and roughly 5 A.M., there is little activity,
+indictating that people are sleeping. Then activity peaks during the middle of the day and is consistent throughout, before slowly declining as night arrives. 
+
+How about the 5 minute interval where on average, the most number of steps are taken?
+```{r max, echo = TRUE}
+which(mean_by_interval$Mean == (max(mean_by_interval$Mean, na.rm=T)))
+MI = mean_by_interval[104,]
+max_steps = round(MI$Mean, digits = 2)
+max_interval = MI$interval
+```
+The interval that contains the max number of steps on average (`r max_steps`) is interval `r max_interval`.
 
 ## Imputing missing values
 
+The data frame contains many missing values that need to be imputed through some logical method. Let's first
+take a look at how many NA values there are and where they are located.
+```{r missing, echo = TRUE}
+mv = sum(is.na(AMD))
+```
+The number of missing values in the dataset is `r mv`.
 
+```{r missingdata, echo = TRUE}
+missing_data = AMD %>% group_by(date) %>% summarize(missing = sum(is.na(steps)))
+head(missing_data)
+```
+So there are 2304 NA values, but what is more interesting is that days with missing values are missing every
+single value for that day, and all other days have complete observations across every interval. One interesting
+imputation method I considered is finding the specific day of the week (i.e. Tuesday) for days with missing 
+values, and filling in missing values with the average number of steps for that day of the week. 
+
+First we need to calculate the mean number of steps taken for each interval on a given weekday. Then, we will
+pinpoint exactly which dates have missing values, and on what day of the week they fall on.
+
+```{r weekday, echo = TRUE}
+AMD$day = weekdays(AMD$date)
+AMD$day = as.factor(AMD$day)
+
+mean_by_weekday = AMD %>% group_by(day, interval) %>% summarize(mean = mean(steps,na.rm=T))
+
+missing_data$day = weekdays(missing_data$date)
+missing_data$day = as.factor(missing_data$day)
+missing_days = subset(missing_data, missing == 288)
+missing_days
+```
+
+The missing_days data frame tells us exactly where to impute our values, and now we just need the values
+that we will use to do so. I created vectors containing the mean steps taken for each interval on the days
+we need, which is all days except Tuesday, as Tuesdays contained no missing values. 
+
+```{r imputevectors, echo = TRUE}
+monday_values = subset(mean_by_weekday, day == "Monday")
+mm = c(monday_values$mean)
+head(monday_values)
+head(mm)
+wednesday_values = subset(mean_by_weekday, day == "Wednesday")
+wm = c(wednesday_values$mean)
+thursday_values = subset(mean_by_weekday, day == "Thursday")
+tm = c(thursday_values$mean)
+friday_values = subset(mean_by_weekday, day == "Friday")
+fm = c(friday_values$mean)
+saturday_values = subset(mean_by_weekday, day == "Saturday")
+satm = c(saturday_values$mean)
+sunday_values = subset(mean_by_weekday, day == "Sunday")
+sunm = c(sunday_values$mean)
+```
+
+Finally, with the knowledge of where to impute and what to impute, let's impute the values.
+```{r impute, echo = TRUE}
+AMD_imputed = AMD
+
+AMD_imputed$steps[AMD$date == "2012-10-01"] = mm
+AMD_imputed$steps[AMD$date == "2012-10-08"] = mm
+AMD_imputed$steps[AMD$date == "2012-11-01"] = tm
+AMD_imputed$steps[AMD$date == "2012-11-04"] = sunm
+AMD_imputed$steps[AMD$date == "2012-11-09"] = fm
+AMD_imputed$steps[AMD$date == "2012-11-10"] = satm
+AMD_imputed$steps[AMD$date == "2012-11-14"] = wm
+AMD_imputed$steps[AMD$date == "2012-11-30"] = fm
+```
+
+Last but not least, reconstructing the histogram of total steps taken each day, but now with imputed values.
+```{r histogramimputed, echo = TRUE, fig.height = 4}
+tsteps_imputed = AMD_imputed %>% 
+  group_by(date) %>% 
+  summarize(Total_Steps = sum(steps)) %>%
+  mutate(Mean_Steps = mean(Total_Steps),
+         Median_Steps = median(Total_Steps))
+
+g3 = ggplot(tsteps_imputed, aes(Total_Steps))
+g3 + geom_histogram(color = "red", binwidth = 2000, fill = "orange") +
+  xlab("Total Steps") +
+  ylab("Frequency") +
+  ggtitle("Histogram of Total Steps taken each day after imputation")
+```
+
+How has imputing with this method affected the mean and median? 
+```{r meanmedianimputed, echo = TRUE}
+head(tsteps_imputed, 1)
+```
+So the new mean is ~10821, and the new median is 11015, both an increase from the previous mean and median
+before imputation. This is completely possible because my method of imputation was not uniform across all
+missing values. There were days of the week that had more missing values than other days, such as Monday and
+Friday, so the mean will be more skewed towards the mean of those two days as opposed to other days. This
+phenomenon also accounts for the shift in the median. 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+Since we already created the day variable for the previous section, we just need to revalue the factors
+so that there are only two levels: weekday and weekend.
+
+```{r weekdayfactor, echo = TRUE}
+AMD_imputed$day = plyr::revalue(AMD_imputed$day, c("Monday" = "weekday", "Tuesday" = "weekday",
+                                                   "Wednesday" = "weekday", "Thursday" = "weekday",
+                                                   "Friday" = "weekday", "Saturday" = "weekend",
+                                                   "Sunday" = "weekend"))
+```
+
+Time to construct the panel plot. We create a new data frame called mean_by_day_interval, grouping by
+day and interval, then computing the mean for each interval. What we find is that there are indeed
+some differences in activity patterns between weekdays and weekends.
+
+```{r panel, echo = TRUE}
+mean_by_day_interval = AMD_imputed %>% group_by(day, interval) %>% summarize(Mean = mean(steps))
+
+g4 = ggplot(mean_by_day_interval, aes(interval, Mean))
+g4 + geom_line(linetype = "solid", color = "red") +
+     facet_grid(day ~.) +
+     xlab("Interval") +
+     ggtitle("Mean Steps taken by interval for Weekdays vs. Weekends")
+```
+
